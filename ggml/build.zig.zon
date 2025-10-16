@@ -1,0 +1,49 @@
+.{
+    .name = .ggml,
+    .version = "0.0.1",
+    .fingerprint = 0x5e7af59a388a17bd, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .ggml = .{
+            .url = "git+https://github.com/ggml-org/llama.cpp#12bbc3fa50b6df03318a4451c9a2210200a0b28d",
+            .hash = "N-V-__8AAHkPygX_6WEOXAyJ7vANO-mmBOGUiGo_rkjfPcbM",
+        },
+        .shaderc = .{
+            .path = "shaderc",
+        },
+        .vulkan_headers = .{
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Headers#75ad707a587e1469fb53a901b9b68fe9f6fbc11f",
+            .hash = "N-V-__8AAPJS7wFRVAIGhMZ7cis5e-y5LZfn2KfO5O2jiHGH",
+        },
+        .vulkan_hpp = .{
+            .url = "git+https://github.com/KhronosGroup/Vulkan-Hpp#d5b553d969cf73b0bd321ae2d1d01b92aabac366",
+            .hash = "N-V-__8AAI6BlgFaSlQviaiYGej9pe1o87SP_oTJykbw8RXS",
+        },
+        .vulkan_sdk_x86_64_linux = .{
+            .url = "https://sdk.lunarg.com/sdk/download/1.4.313.0/linux/vulkansdk-linux-x86_64-1.4.313.0.tar.xz",
+            .hash = "N-V-__8AAG1jNXvbL2HHEpqp9L9lOki6kYrf-SueXvfXzcX3",
+            .lazy = true,
+        },
+        .vulkan_sdk_aarch64_linux = .{
+            .url = "https://github.com/jakoch/vulkan-sdk-arm/releases/download/1.4.321.1/vulkansdk-ubuntu-22.04-arm-1.4.321.1.tar.xz",
+            .hash = "N-V-__8AAGUSYR2C9vpuYOHXPP-TVrOqEgxLq6xGHvVfBn4Z",
+            .lazy = true,
+        },
+        .vulkan_sdk_x86_64_windows = .{
+            .url = "https://sdk.lunarg.com/sdk/download/1.4.328.1/windows/VulkanRT-X64-1.4.328.1-Components.zip",
+            .hash = "N-V-__8AAIhc1ANlfYGUFis-YSspNoUZSdQLECvEDP5nJqJa",
+            .lazy = true,
+        },
+        .vulkan_sdk_aarch64_windows = .{
+            .url = "https://sdk.lunarg.com/sdk/download/1.4.328.1/warm/VulkanRT-ARM64-1.4.328.1-Components.zip",
+            .hash = "N-V-__8AABjnbwOurqQzTXrbFt4XX1aDLtEi9EGQ1-8gyu-6",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+        "LICENSE",
+    },
+}

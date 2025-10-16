@@ -1,0 +1,17 @@
+.{
+    .name = .glslang,
+    .version = "0.0.1",
+    .fingerprint = 0x274a355eede0e3a, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .glslang = .{
+            .url = "git+https://github.com/KhronosGroup/glslang#a57276bf558f5cf94d3a9854ebdf5a2236849a5a",
+            .hash = "N-V-__8AAJ4gkALzuEkr68L7NFlO1QQMauO69dWU3f5pbxbY",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "glslang",
+    },
+}

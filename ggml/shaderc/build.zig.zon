@@ -1,0 +1,19 @@
+.{
+    .name = .shaderc,
+    .version = "0.0.1",
+    .fingerprint = 0x33f3840bc862c09f, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .shaderc = .{
+            .url = "git+https://github.com/google/shaderc#49d6a9328a07fe084a2ac018123e39696a441416",
+            .hash = "N-V-__8AAPB0EgAPBy0AqCK9nYzU8Dns21w3EQh5YnrkUVv4",
+        },
+        .glslang = .{
+            .path = "vendor/glslang",
+        },
+        .spirv_tools = .{
+            .path = "vendor/spirv-tools",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "build-version.inc", "README.md" },
+}

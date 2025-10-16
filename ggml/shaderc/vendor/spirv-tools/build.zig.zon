@@ -1,0 +1,21 @@
+.{
+    .name = .spirv_tools,
+    .version = "0.0.1",
+    .fingerprint = 0xba03d7cd2bc1c023, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .spirv_tools = .{
+            .url = "git+https://github.com/KhronosGroup/SPIRV-Tools#19042c8921f35f7bec56b9e5c96c5f5691588ca8",
+            .hash = "N-V-__8AANWbewH8i1re1ZkYPYc1zujsCMw-DFOhy_SaJuPM",
+        },
+        .spirv_headers = .{
+            .url = "git+https://github.com/KhronosGroup/SPIRV-Headers#01e0577914a75a2569c846778c2f93aa8e6feddd",
+            .hash = "N-V-__8AACLtOgBeZh_2883Rl1qcLSzdgAz_6rTL0MrS30cG",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "generated",
+    },
+}

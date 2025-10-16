@@ -1,0 +1,22 @@
+.{
+    .name = .llama_cpp_zig,
+    .version = "0.0.1",
+    .fingerprint = 0x2177db0a68159fe6, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .llama_cpp = .{
+            .url = "git+https://github.com/ggml-org/llama.cpp#12bbc3fa50b6df03318a4451c9a2210200a0b28d",
+            .hash = "N-V-__8AAHkPygX_6WEOXAyJ7vANO-mmBOGUiGo_rkjfPcbM",
+        },
+        .ggml = .{
+            .path = "ggml",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}
