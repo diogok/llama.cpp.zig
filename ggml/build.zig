@@ -76,20 +76,26 @@ fn buildGGML(
     mod.addCMacro("GGML_VERSION", "0");
     mod.addCMacro("GGML_COMMIT", "\"unknown\"");
 
-    mod.addIncludePath(dep.path(src_prefix ++ "src"));
+    const src_path = dep.path(src_prefix ++ "src");
+
+    mod.addIncludePath(src_path);
     mod.addIncludePath(dep.path(src_prefix ++ "include"));
 
-    mod.addCSourceFiles(.{
-        .root = dep.path(src_prefix ++ "src"),
-        .files = ggml_src_c,
-        .flags = cflags,
-    });
+    const c_files = listFilesWithExtension(b, src_path, ".c") catch @panic("can't list C files for GGML");
+    for (c_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cflags,
+        });
+    }
 
-    mod.addCSourceFiles(.{
-        .root = dep.path(src_prefix ++ "src"),
-        .files = ggml_src_cpp,
-        .flags = cppflags,
-    });
+    const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
 
     var lib = b.addLibrary(.{
         .name = "ggml",
@@ -133,17 +139,23 @@ fn buildGGMLCpu(
     mod.addIncludePath(dep.path(src_prefix ++ "src/ggml-cpu"));
     mod.addIncludePath(dep.path(src_prefix ++ "src/ggml-cpu/amx"));
 
-    mod.addCSourceFiles(.{
-        .root = dep.path(src_prefix ++ "src/ggml-cpu"),
-        .files = ggml_cpu_src_c,
-        .flags = cflags,
-    });
+    const src_path = dep.path(src_prefix ++ "src/ggml-cpu");
 
-    mod.addCSourceFiles(.{
-        .root = dep.path(src_prefix ++ "src/ggml-cpu"),
-        .files = ggml_cpu_src_cpp,
-        .flags = cppflags,
-    });
+    const c_files = listFilesWithExtension(b, src_path, ".c") catch @panic("can't list C files for GGML");
+    for (c_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cflags,
+        });
+    }
+
+    const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
 
     const cpu = options.target.result.cpu;
     switch (cpu.arch) {
@@ -384,25 +396,25 @@ fn genVulkanShaders(
     vulkan_shaders_files.addCopyFileToSource(vk_hpp, hpp_path);
 
     const src_shader_path = dep.path(src_prefix ++ "src/ggml-vulkan/vulkan-shaders/");
-    var iterable_dir = std.fs.cwd().openDir(src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
-    defer iterable_dir.close();
-    var it = iterable_dir.iterate();
-    while (it.next() catch @panic("failed to iterate generated shaders dir")) |entry| {
-        if (std.mem.endsWith(u8, entry.name, ".comp")) {
-            const vk_cpp_cmd = b.addRunArtifact(vulkan_shaders_gen_exe);
-            vk_cpp_cmd.addArg("--glslc");
-            vk_cpp_cmd.addFileArg(glslc.getEmittedBin());
-            vk_cpp_cmd.addArg("--source");
-            vk_cpp_cmd.addFileArg(dep.path(b.fmt(src_prefix ++ "src/ggml-vulkan/vulkan-shaders/{s}", .{entry.name})));
-            vk_cpp_cmd.addArg("--output-dir");
-            _ = vk_cpp_cmd.addOutputDirectoryArg("vulkan-shaders");
-            vk_cpp_cmd.addArg("--target-hpp");
-            vk_cpp_cmd.addFileArg(vk_hpp);
-            vk_cpp_cmd.addArg("--target-cpp");
-            const cpp_path = b.fmt("src/vulkan-shaders/{s}.cpp", .{entry.name});
-            const vk_cpp = vk_cpp_cmd.addOutputFileArg(cpp_path);
-            vulkan_shaders_files.addCopyFileToSource(vk_cpp, cpp_path);
-        }
+    const shaders = listFilesWithExtension(b, src_shader_path, ".comp") catch @panic("failed to list shaders files");
+
+    for (shaders) |shader| {
+        const vk_cpp_cmd = b.addRunArtifact(vulkan_shaders_gen_exe);
+        vk_cpp_cmd.addArg("--glslc");
+        vk_cpp_cmd.addFileArg(glslc.getEmittedBin());
+        vk_cpp_cmd.addArg("--source");
+        vk_cpp_cmd.addFileArg(shader);
+        vk_cpp_cmd.addArg("--output-dir");
+        _ = vk_cpp_cmd.addOutputDirectoryArg("vulkan-shaders");
+        vk_cpp_cmd.addArg("--target-hpp");
+        vk_cpp_cmd.addFileArg(vk_hpp);
+        vk_cpp_cmd.addArg("--target-cpp");
+
+        const file_path = shader.getPath(b);
+        const file_name = std.fs.path.basename(file_path);
+        const cpp_path = b.fmt("src/vulkan-shaders/{s}.cpp", .{file_name});
+        const vk_cpp = vk_cpp_cmd.addOutputFileArg(cpp_path);
+        vulkan_shaders_files.addCopyFileToSource(vk_cpp, cpp_path);
     }
 
     return vulkan_shaders_files;
@@ -479,6 +491,49 @@ pub fn linkVulkan(
     }
 }
 
+fn listFilesWithExtension(
+    b: *std.Build,
+    base_path: std.Build.LazyPath,
+    ext: []const u8,
+) ![]const std.Build.LazyPath {
+    var count: usize = 0;
+
+    var iterable_dir = try std.fs.cwd().openDir(
+        base_path.getPath(b),
+        .{
+            .iterate = true,
+        },
+    );
+    defer iterable_dir.close();
+    var it = iterable_dir.iterate();
+    while (try it.next()) |entry| {
+        if (std.mem.endsWith(
+            u8,
+            entry.name,
+            ext,
+        )) {
+            count += 1;
+        }
+    }
+    it.reset();
+
+    const paths = try b.allocator.alloc(std.Build.LazyPath, count);
+
+    var i: usize = 0;
+    while (try it.next()) |entry| {
+        if (std.mem.endsWith(
+            u8,
+            entry.name,
+            ext,
+        )) {
+            paths[i] = base_path.path(b, entry.name);
+            i += 1;
+        }
+    }
+
+    return paths;
+}
+
 const cflags: []const []const u8 = &.{
     "-fPIC",
     "-std=c11",
@@ -489,40 +544,6 @@ const cppflags: []const []const u8 = &.{
     "-fPIC",
     "-std=c++17",
     "-O3",
-};
-
-const ggml_src_c: []const []const u8 = &.{
-    "ggml.c",
-    "ggml-alloc.c",
-    "ggml-quants.c",
-};
-
-const ggml_src_cpp: []const []const u8 = &.{
-    "ggml.cpp",
-    "ggml-backend.cpp",
-    "ggml-opt.cpp",
-    "ggml-threading.cpp",
-    "gguf.cpp",
-
-    "ggml-backend-reg.cpp",
-};
-
-const ggml_cpu_src_c: []const []const u8 = &.{
-    "ggml-cpu.c",
-    "quants.c",
-};
-
-const ggml_cpu_src_cpp: []const []const u8 = &.{
-    "ggml-cpu.cpp",
-    "repack.cpp",
-    "hbm.cpp",
-    "traits.cpp",
-    "amx/amx.cpp",
-    "amx/mmq.cpp",
-    "binary-ops.cpp",
-    "unary-ops.cpp",
-    "vec.cpp",
-    "ops.cpp",
 };
 
 const src_prefix = "ggml/";

@@ -68,11 +68,23 @@ fn buildLlamaCpp(
     mod.addIncludePath(llama_dep.path("src"));
     mod.addIncludePath(llama_dep.path("include"));
 
-    mod.addCSourceFiles(.{
-        .root = llama_dep.path("src"),
-        .files = llama_cpp_src,
-        .flags = cppflags,
-    });
+    const src_path = llama_dep.path("src");
+
+    const c_files = listFilesWithExtension(b, src_path, ".c") catch @panic("can't list C files for GGML");
+    for (c_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cflags,
+        });
+    }
+
+    const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
 
     const build_info_file = b.addWriteFile("build-info.cpp", build_info_cpp_src);
     mod.addCSourceFiles(.{
@@ -167,11 +179,14 @@ fn buildCommon(
     mod.linkLibrary(ggml_lib);
     mod.lib_paths.appendSlice(b.allocator, ggml_lib.root_module.lib_paths.items) catch unreachable;
 
-    mod.addCSourceFiles(.{
-        .root = llama_dep.path("common"),
-        .files = common_src,
-        .flags = cppflags,
-    });
+    const src_path = llama_dep.path("common");
+    const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
+    for (cpp_files) |file| {
+        mod.addCSourceFile(.{
+            .file = file,
+            .flags = cppflags,
+        });
+    }
 
     var lib = b.addLibrary(.{
         .name = "llama_common",
@@ -319,7 +334,7 @@ fn buildRun(
     mod.addIncludePath(llama_dep.path("common"));
     mod.addIncludePath(llama_dep.path("include"));
     mod.addIncludePath(llama_dep.path("ggml/include"));
-    mod.addIncludePath(llama_dep.path("tools/run/linenoise.cppflags"));
+    mod.addIncludePath(llama_dep.path("tools/run/linenoise.cpp"));
 
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
@@ -492,6 +507,49 @@ const build_info_cpp_src =
     \\char const *LLAMA_BUILD_TARGET = "any";
 ;
 
+fn listFilesWithExtension(
+    b: *std.Build,
+    base_path: std.Build.LazyPath,
+    ext: []const u8,
+) ![]const std.Build.LazyPath {
+    var count: usize = 0;
+
+    var iterable_dir = try std.fs.cwd().openDir(
+        base_path.getPath(b),
+        .{
+            .iterate = true,
+        },
+    );
+    defer iterable_dir.close();
+    var it = iterable_dir.iterate();
+    while (try it.next()) |entry| {
+        if (std.mem.endsWith(
+            u8,
+            entry.name,
+            ext,
+        )) {
+            count += 1;
+        }
+    }
+    it.reset();
+
+    const paths = try b.allocator.alloc(std.Build.LazyPath, count);
+
+    var i: usize = 0;
+    while (try it.next()) |entry| {
+        if (std.mem.endsWith(
+            u8,
+            entry.name,
+            ext,
+        )) {
+            paths[i] = base_path.path(b, entry.name);
+            i += 1;
+        }
+    }
+
+    return paths;
+}
+
 const cflags: []const []const u8 = &.{
     "-fPIC",
     "-std=c11",
@@ -502,49 +560,4 @@ const cppflags: []const []const u8 = &.{
     "-fPIC",
     "-std=c++17",
     "-O3",
-};
-
-const llama_cpp_src: []const []const u8 = &.{
-    "llama.cpp",
-    "llama-adapter.cpp",
-    "llama-arch.cpp",
-    "llama-batch.cpp",
-    "llama-chat.cpp",
-    "llama-context.cpp",
-    "llama-cparams.cpp",
-    "llama-grammar.cpp",
-    "llama-graph.cpp",
-    "llama-hparams.cpp",
-    "llama-impl.cpp",
-    "llama-io.cpp",
-    "llama-kv-cache.cpp",
-    "llama-kv-cache-iswa.cpp",
-    "llama-memory.cpp",
-    "llama-memory-hybrid.cpp",
-    "llama-memory-recurrent.cpp",
-    "llama-mmap.cpp",
-    "llama-model-loader.cpp",
-    "llama-model-saver.cpp",
-    "llama-model.cpp",
-    "llama-quant.cpp",
-    "llama-sampling.cpp",
-    "llama-vocab.cpp",
-    "unicode-data.cpp",
-    "unicode.cpp",
-};
-
-const common_src: []const []const u8 = &.{
-    "arg.cpp",
-    "chat-parser.cpp",
-    "chat.cpp",
-    "common.cpp",
-    "console.cpp",
-    "json-partial.cpp",
-    "json-schema-to-grammar.cpp",
-    "llguidance.cpp",
-    "log.cpp",
-    "ngram-cache.cpp",
-    "regex-partial.cpp",
-    "sampling.cpp",
-    "speculative.cpp",
 };
