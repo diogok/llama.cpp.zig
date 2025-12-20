@@ -24,8 +24,9 @@ pub fn main() !void {
         return error.FailedToLoadModel;
     }
 
-    try generate(allocator, model, "Hello, ");
-    try generate(allocator, model, "Goodbye, ");
+    // TODO: ideally should apply chat templates here
+    try generate(allocator, model, "Hello");
+    try generate(allocator, model, "Goodbye");
 }
 
 fn generate(
