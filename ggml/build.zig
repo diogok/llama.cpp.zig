@@ -33,6 +33,7 @@ const Options = struct {
 const Backend = enum(u8) {
     cpu,
     vulkan,
+    metal,
 };
 
 fn buildGGML(
@@ -68,6 +69,18 @@ fn buildGGML(
             const vulkan_lib = buildGGMLVulkan(b, options);
             mod.linkLibrary(vulkan_lib);
             mod.lib_paths.appendSlice(b.allocator, vulkan_lib.root_module.lib_paths.items) catch unreachable;
+        },
+        .metal => {
+            if (options.target.result.os.tag != .macos) {
+                @panic("Metal backend is only supported on macOS");
+            }
+            mod.addCMacro("GGML_USE_METAL", "1");
+            mod.linkFramework("Metal", .{});
+            mod.linkFramework("MetalKit", .{});
+            mod.linkFramework("Foundation", .{});
+            mod.linkFramework("Accelerate", .{});
+            const metal_lib = buildGGMLMetal(b, options);
+            mod.linkLibrary(metal_lib);
         },
         else => {},
     }
@@ -242,6 +255,72 @@ fn buildGGMLCpu(
 
     const lib = b.addLibrary(.{
         .name = "ggml_cpu",
+        .root_module = mod,
+        .linkage = .static,
+    });
+    b.installArtifact(lib);
+
+    return lib;
+}
+
+fn buildGGMLMetal(
+    b: *std.Build,
+    options: Options,
+) *std.Build.Step.Compile {
+    const dep = b.dependency("ggml", .{});
+
+    var mod = b.addModule(
+        "ggml_metal",
+        .{
+            .target = options.target,
+            .optimize = options.optimize,
+            .strip = options.strip,
+            .link_libc = true,
+            .link_libcpp = true,
+        },
+    );
+
+    // Use precompiled metallib (not embedded source)
+    mod.addIncludePath(dep.path(src_prefix ++ "src"));
+    mod.addIncludePath(dep.path(src_prefix ++ "include"));
+    mod.addIncludePath(dep.path(src_prefix ++ "src/ggml-metal"));
+
+    // C++ source files
+    mod.addCSourceFiles(.{
+        .root = dep.path(src_prefix ++ "src/ggml-metal"),
+        .files = &.{
+            "ggml-metal.cpp",
+            "ggml-metal-device.cpp",
+            "ggml-metal-common.cpp",
+            "ggml-metal-ops.cpp",
+        },
+        .flags = cppflags,
+    });
+
+    // Objective-C source files (no ARC - upstream uses manual memory management)
+    const objc_flags: []const []const u8 = &.{
+        "-fPIC",
+        "-O3",
+        "-fno-objc-arc",
+    };
+    mod.addCSourceFiles(.{
+        .root = dep.path(src_prefix ++ "src/ggml-metal"),
+        .files = &.{
+            "ggml-metal-device.m",
+            "ggml-metal-context.m",
+        },
+        .flags = objc_flags,
+    });
+
+    // Link Apple frameworks
+    mod.linkFramework("Metal", .{});
+    mod.linkFramework("MetalKit", .{});
+    mod.linkFramework("Foundation", .{});
+    mod.linkFramework("Accelerate", .{});
+
+    // Note: metallib is compiled and installed by the main build.zig
+    const lib = b.addLibrary(.{
+        .name = "ggml_metal",
         .root_module = mod,
         .linkage = .static,
     });
