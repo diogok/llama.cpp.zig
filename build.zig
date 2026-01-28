@@ -35,6 +35,7 @@ const Options = struct {
 const Backend = enum(u8) {
     cpu,
     vulkan,
+    metal,
 };
 
 fn buildLlamaCpp(
@@ -123,6 +124,12 @@ fn buildLlamaCpp(
     const ggml_lib = ggml_dep.artifact("ggml");
     mod.linkLibrary(ggml_lib);
     mod.lib_paths.appendSlice(b.allocator, ggml_lib.root_module.lib_paths.items) catch unreachable;
+
+    // Install Metal shader library if using Metal backend
+    if (options.backend == .metal) {
+        const metallib = compileMetalLib(b, ggml_dep);
+        b.getInstallStep().dependOn(&b.addInstallFile(metallib, "bin/default.metallib").step);
+    }
 
     const common_lib = buildCommon(b, ggml_lib, options);
     mod.linkLibrary(common_lib);
@@ -580,3 +587,34 @@ const cppflags: []const []const u8 = &.{
     "-std=c++17",
     "-O3",
 };
+
+fn compileMetalLib(b: *std.Build, ggml_dep: *std.Build.Dependency) std.Build.LazyPath {
+    // Compile Metal shaders to .metallib at build time using xcrun
+    // The ggml dependency contains the ggml source which has the metal shaders
+    const ggml_src = ggml_dep.builder.dependency("ggml", .{});
+    const metal_src = ggml_src.path("ggml/src/ggml-metal/ggml-metal.metal");
+    const include_path = ggml_src.path("ggml/src");
+    const metal_include_path = ggml_src.path("ggml/src/ggml-metal");
+
+    // Step 1: Compile .metal to .air (Metal Intermediate Representation)
+    const compile_cmd = b.addSystemCommand(&.{
+        "xcrun", "-sdk", "macosx", "metal",
+        "-c",
+        "-O3",
+    });
+    compile_cmd.addPrefixedDirectoryArg("-I", include_path);
+    compile_cmd.addPrefixedDirectoryArg("-I", metal_include_path);
+    compile_cmd.addArg("-o");
+    const air_output = compile_cmd.addOutputFileArg("ggml.air");
+    compile_cmd.addFileArg(metal_src);
+
+    // Step 2: Link .air to .metallib
+    const link_cmd = b.addSystemCommand(&.{
+        "xcrun", "-sdk", "macosx", "metallib",
+        "-o",
+    });
+    const metallib_output = link_cmd.addOutputFileArg("default.metallib");
+    link_cmd.addFileArg(air_output);
+
+    return metallib_output;
+}

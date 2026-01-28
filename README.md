@@ -1,6 +1,6 @@
 # llama.cpp.zig
 
-A `build.zig` for [llama.cpp](https://github.com/ggml-org/llama.cpp), with Vulkan.
+A `build.zig` for [llama.cpp](https://github.com/ggml-org/llama.cpp), with Vulkan and Metal.
 
 You can use llama.cpp from Zig projects.
 
@@ -14,11 +14,13 @@ Supported targets are:
 - Linux aarch64
 - Windows x86_64
 - Windows aarch64
+- macOS aarch64 (Apple Silicon)
 
 Supported backends are:
 
 - CPU
 - Vulkan
+- Metal (macOS only)
 
 Other targets and backends can be added with time and test devices.
 
@@ -29,6 +31,7 @@ Other targets and backends can be added with time and test devices.
 - Raspberry Pi 5 (aarch64 linux): CPU works, Vulkan compiles but don't due to some lack of memory.
 - Surface pro X SQ2 (aarch64 windows): CPU works, vulkan compiles but don't run due to some missing feature.
 - Termux (aarch64 android/linux): CPU works, vulkan compiles but don't run.
+- M4 Pro (aarch64 macOS): All good.
 
 ## How to build
 
@@ -45,6 +48,7 @@ You can choose the backend used:
 ```sh
 zig build install -Dbackend=vulkan
 zig build install -Dbackend=cpu #default
+zig build install -Dbackend=metal
 ```
 
 And choose a target architecture and OS:
@@ -76,6 +80,22 @@ you_module.linkLibrary(llama_cpp_lib);
 ```
 
 Refer to [src/demo.zig] for an usage example.
+
+### Metal Backend (macOS)
+
+Metal requires the Metal Toolchain to compile shaders at build time:
+
+```sh
+xcodebuild -downloadComponent MetalToolchain
+```
+When building with Metal, the output includes a `default.metallib` file that must be distributed alongside your binaries:
+
+```
+zig-out/bin/
+├── llama-run
+├── llama-server
+└── default.metallib   # required for Metal to work
+```
 
 ## Licenses
 
