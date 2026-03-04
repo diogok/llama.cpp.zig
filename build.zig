@@ -322,6 +322,7 @@ fn buildBench(
 
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
+    if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
     const exe = b.addExecutable(.{
         .name = name,
@@ -373,6 +374,7 @@ fn buildRun(
 
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
+    if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
     // cli.cpp depends on server code (exclude server.cpp which has its own main)
     const srv_path = llama_dep.path("tools/server");
@@ -474,6 +476,7 @@ fn buildServer(
 
     mod.linkLibrary(llama);
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
+    if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
     const mtmd = buildMTMD(b, llama, options);
     mod.linkLibrary(mtmd);
@@ -548,6 +551,7 @@ fn buildDemo(
 
     // workaround until this issue is resolved: https://github.com/ziglang/zig/pull/23936
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
+    if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
     const exe = b.addExecutable(.{
         .name = "demo",
@@ -637,6 +641,17 @@ fn listFilesWithExtension(
     }
 
     return paths;
+}
+
+fn linkVulkanSystem(
+    target: std.Build.ResolvedTarget,
+    mod: *std.Build.Module,
+) void {
+    switch (target.result.os.tag) {
+        .linux => mod.linkSystemLibrary("vulkan", .{}),
+        .windows => mod.linkSystemLibrary("vulkan-1", .{}),
+        else => {},
+    }
 }
 
 const cflags: []const []const u8 = &.{

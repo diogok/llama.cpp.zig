@@ -64,7 +64,6 @@ fn buildGGML(
     switch (options.backend) {
         .vulkan => {
             mod.addCMacro("GGML_USE_VULKAN", "1");
-            linkVulkan(b, options.target, mod);
             const vulkan_lib = buildGGMLVulkan(b, options);
             mod.linkLibrary(vulkan_lib);
             mod.lib_paths.appendSlice(b.allocator, vulkan_lib.root_module.lib_paths.items) catch unreachable;
@@ -295,7 +294,7 @@ fn buildGGMLVulkan(
         .flags = cppflags,
     });
 
-    linkVulkan(b, options.target, mod);
+    addVulkanLibraryPath(b, options.target, mod);
 
     const vk_shaders = buildVulkanShaders(b, options);
     mod.linkLibrary(vk_shaders);
@@ -455,7 +454,10 @@ fn buildVulkanShadersGen(b: *std.Build) *std.Build.Step.Compile {
     return vulkan_shaders_gen_exe;
 }
 
-pub fn linkVulkan(
+/// Adds the Vulkan SDK library path to the module (for finding libvulkan at link time).
+/// Does NOT call linkSystemLibrary — use linkVulkanSystem on the final executable module
+/// to avoid embedding .so references inside static archives.
+pub fn addVulkanLibraryPath(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     mod: *std.Build.Module,
@@ -463,29 +465,39 @@ pub fn linkVulkan(
     const sdk_name = b.fmt("vulkan_sdk_{s}_{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag) });
     _ = std.mem.replaceScalar(u8, sdk_name, '-', '_');
 
-    var vulkan_sdk_dep = b.lazyDependency(sdk_name, .{});
-    if (vulkan_sdk_dep == null) {
-        return;
-    }
+    const vulkan_sdk_dep = b.lazyDependency(sdk_name, .{}) orelse return;
 
     switch (target.result.os.tag) {
         .linux => {
             const arch = @tagName(target.result.cpu.arch);
-            mod.addLibraryPath(vulkan_sdk_dep.?.path(b.fmt("{s}/lib", .{arch})));
-            mod.linkSystemLibrary("vulkan", .{});
+            mod.addLibraryPath(vulkan_sdk_dep.path(b.fmt("{s}/lib", .{arch})));
         },
         .windows => {
             switch (target.result.cpu.arch) {
                 .x86_64 => {
-                    mod.addLibraryPath(vulkan_sdk_dep.?.path("x64"));
-                    mod.linkSystemLibrary("vulkan-1", .{});
+                    mod.addLibraryPath(vulkan_sdk_dep.path("x64"));
                 },
                 .aarch64 => {
-                    mod.addLibraryPath(vulkan_sdk_dep.?.path(""));
-                    mod.linkSystemLibrary("vulkan-1", .{});
+                    mod.addLibraryPath(vulkan_sdk_dep.path(""));
                 },
                 else => {},
             }
+        },
+        else => {},
+    }
+}
+
+/// Links the Vulkan system library. Call this only on the final executable module.
+pub fn linkVulkanSystem(
+    target: std.Build.ResolvedTarget,
+    mod: *std.Build.Module,
+) void {
+    switch (target.result.os.tag) {
+        .linux => {
+            mod.linkSystemLibrary("vulkan", .{});
+        },
+        .windows => {
+            mod.linkSystemLibrary("vulkan-1", .{});
         },
         else => {},
     }
