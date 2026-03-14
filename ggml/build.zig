@@ -340,10 +340,11 @@ fn buildVulkanShaders(
 
     // add each shader
     const src_shader_path = ggml_dep.path(src_prefix ++ "src/ggml-vulkan/vulkan-shaders/");
-    var iterable_dir = std.fs.cwd().openDir(src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
-    defer iterable_dir.close();
+    const io = b.graph.io;
+    var iterable_dir = std.Io.Dir.cwd().openDir(io, src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (it.next() catch @panic("failed to iterate generated shaders dir")) |entry| {
+    while (it.next(io) catch @panic("failed to iterate generated shaders dir")) |entry| {
         if (std.mem.endsWith(u8, entry.name, ".comp")) {
             const cpp = b.fmt("{s}.cpp", .{entry.name});
             shader_files.append(cpp) catch @panic("failed to add generated shader cpp");
@@ -508,42 +509,26 @@ fn listFilesWithExtension(
     base_path: std.Build.LazyPath,
     ext: []const u8,
 ) ![]const std.Build.LazyPath {
-    var count: usize = 0;
+    const io = b.graph.io;
 
-    var iterable_dir = try std.fs.cwd().openDir(
+    var iterable_dir = try std.Io.Dir.cwd().openDir(
+        io,
         base_path.getPath(b),
         .{
             .iterate = true,
         },
     );
-    defer iterable_dir.close();
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (try it.next()) |entry| {
-        if (std.mem.endsWith(
-            u8,
-            entry.name,
-            ext,
-        )) {
-            count += 1;
-        }
-    }
-    it.reset();
 
-    const paths = try b.allocator.alloc(std.Build.LazyPath, count);
-
-    var i: usize = 0;
-    while (try it.next()) |entry| {
-        if (std.mem.endsWith(
-            u8,
-            entry.name,
-            ext,
-        )) {
-            paths[i] = base_path.path(b, entry.name);
-            i += 1;
+    var list = std.array_list.Managed(std.Build.LazyPath).init(b.allocator);
+    while (try it.next(io)) |entry| {
+        if (std.mem.endsWith(u8, entry.name, ext)) {
+            try list.append(base_path.path(b, entry.name));
         }
     }
 
-    return paths;
+    return list.items;
 }
 
 const cflags: []const []const u8 = &.{
