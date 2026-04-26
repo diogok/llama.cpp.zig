@@ -257,6 +257,7 @@ fn buildGGMLVulkan(
     const dep = b.dependency("ggml", .{});
     const vk_hpp = b.dependency("vulkan_hpp", .{});
     const vk_headers = b.dependency("vulkan_headers", .{});
+    const spirv_headers = b.dependency("spirv_headers", .{});
 
     var mod = b.addModule(
         "ggml_vulkan",
@@ -268,10 +269,10 @@ fn buildGGMLVulkan(
             .strip = options.strip,
         },
     );
-    mod.addCMacro("NDEBUG", "");
 
-    mod.addCMacro("VK_NV_cooperative_matrix", "");
-    mod.addCMacro("VK_NV_cooperative_matrix2", "");
+    // VK_NV_cooperative_matrix{,2} are guard macros set by vulkan_core.h itself —
+    // do NOT define them on the command line, that triggers a redefinition error.
+    // NDEBUG is implied by ReleaseFast/ReleaseSmall, so don't add it again.
     mod.addCMacro("GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT", "");
     mod.addCMacro("GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT", "");
     mod.addCMacro("GGML_VULKAN_COOPMAT_GLSLC_SUPPORT", "");
@@ -284,6 +285,7 @@ fn buildGGMLVulkan(
 
     mod.addIncludePath(vk_hpp.path("vulkan"));
     mod.addIncludePath(vk_headers.path("include"));
+    mod.addIncludePath(spirv_headers.path("include"));
 
     mod.addIncludePath(b.path("src/vulkan-shaders"));
 
