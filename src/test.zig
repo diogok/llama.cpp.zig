@@ -1,42 +1,67 @@
 const std = @import("std");
+const testing = std.testing;
 
 const c = @cImport({
     @cInclude("llama.h");
 });
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() != .leak);
-    const allocator = gpa.allocator();
+const model_path = "models/TinyStories-656K-Q8_0.gguf";
 
-    // init
+// Greedy generation is deterministic: same model + same prompt → same tokens.
+// These tests double as a smoke test that llama.cpp built and links correctly.
+
+test "build smoke: backend init and model load" {
     c.llama_backend_init();
     defer c.llama_backend_free();
 
-    // load model
     var params = c.llama_model_default_params();
-    params.n_gpu_layers = 99;
+    params.n_gpu_layers = 0;
 
-    const model = c.llama_model_load_from_file("models/TinyStories-656K-Q8_0.gguf", params);
+    const model = c.llama_model_load_from_file(model_path, params);
     defer c.llama_model_free(model);
+    try testing.expect(model != null);
 
-    if (model == null) {
-        return error.FailedToLoadModel;
-    }
-
-    // TODO: ideally should apply chat templates here
-    try generate(allocator, model, "Hello");
-    try generate(allocator, model, "Goodbye");
+    const vocab = c.llama_model_get_vocab(model);
+    try testing.expect(vocab != null);
 }
 
-fn generate(
+test "greedy generation: Once upon a time" {
+    const out = try greedyGenerate(testing.allocator, "Once upon a time", 32);
+    defer testing.allocator.free(out);
+
+    try testing.expectEqualStrings(
+        ", a little girl named Lily lived in a small house. She loved to eat yummy food. One day, she saw a small bird on the ground. The bird was sad because it could not eat it.\nLily wanted to help the bird. She tried to eat the food and ",
+        out,
+    );
+}
+
+test "greedy generation: Hello" {
+    const out = try greedyGenerate(testing.allocator, "Hello", 16);
+    defer testing.allocator.free(out);
+
+    try testing.expectEqualStrings(
+        " and a girl were walking in the park. One day she saw a small bird flying in the sk",
+        out,
+    );
+}
+
+fn greedyGenerate(
     allocator: std.mem.Allocator,
-    model: ?*c.llama_model,
     prompt: []const u8,
-) !void {
+    max_new_tokens: usize,
+) ![]u8 {
+    c.llama_backend_init();
+    defer c.llama_backend_free();
+
+    var model_params = c.llama_model_default_params();
+    model_params.n_gpu_layers = 0;
+
+    const model = c.llama_model_load_from_file(model_path, model_params);
+    defer c.llama_model_free(model);
+    if (model == null) return error.FailedToLoadModel;
+
     const vocab = c.llama_model_get_vocab(model);
 
-    // init context
     const model_ctx_train = c.llama_model_n_ctx_train(model);
     var context_params = c.llama_context_default_params();
     if (model_ctx_train <= 0) {
@@ -50,22 +75,14 @@ fn generate(
 
     const context = c.llama_init_from_model(model, context_params);
     defer c.llama_free(context);
-    if (context == null) {
-        return error.FailedToInitContext;
-    }
+    if (context == null) return error.FailedToInitContext;
 
-    // init sampler
     var sampler_params = c.llama_sampler_chain_default_params();
     sampler_params.no_perf = true;
     const sampler = c.llama_sampler_chain_init(sampler_params);
     defer c.llama_sampler_free(sampler);
-    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_top_k(40));
-    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_top_p(0.9, 1));
-    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_min_p(0.05, 1));
-    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_temp(0.6));
-    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_dist(c.LLAMA_DEFAULT_SEED));
+    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_greedy());
 
-    // tokenize prompt
     const prompt_token_len = -c.llama_tokenize(
         vocab,
         prompt.ptr,
@@ -87,19 +104,13 @@ fn generate(
         true,
         true,
     );
-    if (tokenize_prompt_result < 0) {
-        return error.FailedToTokenizePrompt;
-    }
+    if (tokenize_prompt_result < 0) return error.FailedToTokenizePrompt;
 
-    // init batch
     var batch = c.llama_batch_get_one(prompt_tokens.ptr, @intCast(prompt_tokens.len));
 
     if (c.llama_model_has_encoder(model)) {
         const encode_r = c.llama_encode(context, batch);
-        if (encode_r != 0) {
-            std.log.err("failed to encode: {d}", .{encode_r});
-            return error.FailedToEncodePrompt;
-        }
+        if (encode_r != 0) return error.FailedToEncodePrompt;
         var decoder_token = c.llama_model_decoder_start_token(model);
         if (decoder_token == c.LLAMA_TOKEN_NULL) {
             decoder_token = c.llama_vocab_bos(vocab);
@@ -107,29 +118,17 @@ fn generate(
         batch = c.llama_batch_get_one(&decoder_token, 1);
     }
 
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const out = &stdout_writer.interface;
+    var output = std.array_list.Managed(u8).init(allocator);
+    errdefer output.deinit();
 
-    try out.print("{s}\n", .{prompt});
-
-    // track tokens and limits
-    const limit: usize = @intCast(c.llama_n_ctx(context));
-    var count: usize = prompt_tokens.len;
-
-    // eval loop
-    eval: while (count <= limit) : (count += 1) {
+    var generated: usize = 0;
+    while (generated < max_new_tokens) : (generated += 1) {
         const decode_r = c.llama_decode(context, batch);
-        if (decode_r > 0) {
-            std.log.err("failed to eval: {d}", .{decode_r});
-            break :eval;
-        }
+        if (decode_r > 0) return error.FailedToDecode;
 
         var token_id = c.llama_sampler_sample(sampler, context, -1);
 
-        if (c.llama_vocab_is_eog(vocab, token_id)) {
-            break :eval;
-        }
+        if (c.llama_vocab_is_eog(vocab, token_id)) break;
 
         var buffer: [128]u8 = undefined;
         const piece_len = c.llama_token_to_piece(
@@ -140,14 +139,10 @@ fn generate(
             0,
             true,
         );
-        if (piece_len < 0) {
-            std.log.err("failed to convert token to piece", .{});
-            break :eval;
-        }
-        _ = try out.write(buffer[0..@abs(piece_len)]);
+        if (piece_len < 0) return error.FailedToConvertTokenToPiece;
+        try output.appendSlice(buffer[0..@abs(piece_len)]);
         batch = c.llama_batch_get_one(&token_id, 1);
     }
 
-    try out.print("\n", .{});
-    try out.flush();
+    return output.toOwnedSlice();
 }

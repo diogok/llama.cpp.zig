@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+
 pub fn build(b: *std.Build) void {
     // consider building with mcpu=x86_64_v3 for broader compatibility, due to avx
     const target = b.standardTargetOptions(.{});
@@ -17,12 +18,14 @@ pub fn build(b: *std.Build) void {
         .strip = strip,
     };
     const llama = buildLlamaCpp(b, options);
+    const mtmd = buildMTMD(b, llama, options);
 
-    buildRun(b, llama, options);
+    buildRun(b, llama, mtmd, options);
     buildBench(b, llama, options);
-    buildServer(b, llama, options);
+    buildServer(b, llama, mtmd, options);
 
     buildDemo(b, llama, options);
+    buildTest(b, llama, options);
 }
 
 const Options = struct {
@@ -85,7 +88,7 @@ fn buildLlamaCpp(
         });
     }
 
-    const build_info_file = b.addWriteFile("build-info.cpp", build_info_cpp_src);
+    const build_info_file = b.addWriteFile("build-info.cpp", buildInfoCppSrc(b, options));
     mod.addCSourceFiles(.{
         .root = build_info_file.getDirectory(),
         .files = &.{"build-info.cpp"},
@@ -287,7 +290,8 @@ fn buildMTMD(
     });
     b.installArtifact(lib);
 
-    lib.installHeadersDirectory(llama_dep.path("tools/mtmd"), "", .{});
+    lib.installHeader(llama_dep.path("tools/mtmd/mtmd.h"), "mtmd.h");
+    lib.installHeader(llama_dep.path("tools/mtmd/mtmd-helper.h"), "mtmd-helper.h");
 
     return lib;
 }
@@ -344,6 +348,7 @@ fn buildBench(
 fn buildRun(
     b: *std.Build,
     llama: *std.Build.Step.Compile,
+    mtmd: *std.Build.Step.Compile,
     options: Options,
 ) void {
     const name = "llama-run";
@@ -392,7 +397,6 @@ fn buildRun(
         .flags = cppflags,
     });
 
-    const mtmd = buildMTMD(b, llama, options);
     mod.linkLibrary(mtmd);
 
     const exe = b.addExecutable(.{
@@ -415,6 +419,7 @@ fn buildRun(
 fn buildServer(
     b: *std.Build,
     llama: *std.Build.Step.Compile,
+    mtmd: *std.Build.Step.Compile,
     options: Options,
 ) void {
     const name = "llama-server";
@@ -448,7 +453,6 @@ fn buildServer(
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
     if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
-    const mtmd = buildMTMD(b, llama, options);
     mod.linkLibrary(mtmd);
 
     const common = buildCommon(b, llama, options);
@@ -457,26 +461,7 @@ fn buildServer(
     // embed the web UI assets (gated on LLAMA_BUILD_WEBUI in server-http.cpp)
     mod.addCMacro("LLAMA_BUILD_WEBUI", "");
 
-    // use xxd to compile assets
-    const xxd_mod = b.addModule(
-        "xxd",
-        .{
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-            .link_libc = true,
-        },
-    );
-    xxd_mod.addCSourceFiles(.{
-        .root = b.path("src"),
-        .files = &.{
-            "xxd.c",
-        },
-        .flags = &.{},
-    });
-    const xxd_exe = b.addExecutable(.{
-        .name = "xxd",
-        .root_module = xxd_mod,
-    });
+    const xxd_exe = buildXxdHostExe(b);
     const assets = [_][]const u8{
         "index.html",
         "bundle.js",
@@ -543,6 +528,36 @@ fn buildDemo(
     run_step.dependOn(&run_cmd.step);
 }
 
+fn buildTest(
+    b: *std.Build,
+    llama: *std.Build.Step.Compile,
+    options: Options,
+) void {
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/test.zig"),
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+
+    mod.linkLibrary(llama);
+
+    // workaround until this issue is resolved: https://github.com/ziglang/zig/pull/23936
+    mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
+    if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
+
+    const tests = b.addTest(.{
+        .root_module = mod,
+    });
+
+    const run_tests = b.addRunArtifact(tests);
+    // Tests load models/TinyStories-656K-Q8_0.gguf via a relative path,
+    // so run from the project root.
+    run_tests.setCwd(b.path("."));
+
+    const test_step = b.step("test", "Run tests (loads models/TinyStories-656K-Q8_0.gguf)");
+    test_step.dependOn(&run_tests.step);
+}
+
 fn installWithSuffixes(
     b: *std.Build,
     exe: *std.Build.Step.Compile,
@@ -566,15 +581,29 @@ fn installWithSuffixes(
     b.getInstallStep().dependOn(&install.step);
 }
 
-const build_info_cpp_src =
-    \\#include <cstdio>
-    \\#include <string>
-    \\
-    \\int LLAMA_BUILD_NUMBER = 999999;
-    \\char const *LLAMA_COMMIT = "master";
-    \\char const *LLAMA_COMPILER = "Zig";
-    \\char const *LLAMA_BUILD_TARGET = "any";
-    \\
+fn buildInfoCppSrc(b: *std.Build, options: Options) []const u8 {
+    const llama_cpp_commit = commitFromGitUrl(@import("build.zig.zon").dependencies.llama_cpp.url);
+
+    const target = options.target.result;
+    const zv = builtin.zig_version;
+    const globals = b.fmt(
+        \\#include <cstdio>
+        \\#include <string>
+        \\
+        \\int LLAMA_BUILD_NUMBER = 0;
+        \\char const *LLAMA_COMMIT = "{s}";
+        \\char const *LLAMA_COMPILER = "Zig {d}.{d}.{d}";
+        \\char const *LLAMA_BUILD_TARGET = "{s}-{s}-{s}";
+        \\
+    , .{
+        llama_cpp_commit,
+        zv.major, zv.minor, zv.patch,
+        @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi),
+    });
+    return std.mem.concat(b.allocator, u8, &.{ globals, build_info_funcs }) catch @panic("OOM");
+}
+
+const build_info_funcs =
     \\int llama_build_number(void) { return LLAMA_BUILD_NUMBER; }
     \\const char * llama_commit(void) { return LLAMA_COMMIT; }
     \\const char * llama_compiler(void) { return LLAMA_COMPILER; }
@@ -590,6 +619,12 @@ const build_info_cpp_src =
     \\    fprintf(stderr, "%s: built with %s for %s\n", __func__, llama_compiler(), llama_build_target());
     \\}
 ;
+
+fn commitFromGitUrl(comptime url: []const u8) []const u8 {
+    const hash_idx = comptime std.mem.indexOfScalar(u8, url, '#') orelse
+    @compileError("dependency URL is missing '#<commit>' suffix: " ++ url);
+    return url[hash_idx + 1 ..];
+}
 
 fn listFilesWithExtension(
     b: *std.Build,
@@ -632,6 +667,25 @@ fn listFilesWithExtension(
     }
 
     return paths;
+}
+
+/// Builds a host-targeted xxd executable used at build time to embed assets
+/// (CMakeLists invokes a cmake script equivalent at the same point).
+fn buildXxdHostExe(b: *std.Build) *std.Build.Step.Compile {
+    const mod = b.createModule(.{
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+        .link_libc = true,
+    });
+    mod.addCSourceFiles(.{
+        .root = b.path("src"),
+        .files = &.{"xxd.c"},
+        .flags = &.{},
+    });
+    return b.addExecutable(.{
+        .name = "xxd",
+        .root_module = mod,
+    });
 }
 
 fn linkVulkanSystem(

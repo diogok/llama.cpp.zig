@@ -70,10 +70,11 @@ fn buildGGML(
         },
         else => {},
     }
+    const ggml_commit = commitFromGitUrl(@import("build.zig.zon").dependencies.ggml.url);
 
     mod.addCMacro("NDEBUG", "");
     mod.addCMacro("GGML_VERSION", "0");
-    mod.addCMacro("GGML_COMMIT", "\"unknown\"");
+    mod.addCMacro("GGML_COMMIT", b.fmt("\"{s}\"", .{ggml_commit}));
 
     const src_path = dep.path(src_prefix ++ "src");
 
@@ -501,6 +502,12 @@ pub fn linkVulkanSystem(
         },
         else => {},
     }
+}
+
+fn commitFromGitUrl(comptime url: []const u8) []const u8 {
+    const hash_idx = comptime std.mem.indexOfScalar(u8, url, '#') orelse
+    @compileError("dependency URL is missing '#<commit>' suffix: " ++ url);
+    return url[hash_idx + 1 ..];
 }
 
 fn listFilesWithExtension(
