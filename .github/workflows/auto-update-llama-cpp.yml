@@ -31,15 +31,10 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Switch to ${{ env.UPDATE_BRANCH }} (branch off main if missing)
+      - name: Reset ${{ env.UPDATE_BRANCH }} to current main
         run: |
-          git fetch origin "${MAIN_BRANCH}" 2>/dev/null || true
-          git fetch origin "${UPDATE_BRANCH}" 2>/dev/null || true
-          if git rev-parse --verify "origin/${UPDATE_BRANCH}" >/dev/null 2>&1; then
-            git checkout -B "${UPDATE_BRANCH}" "origin/${UPDATE_BRANCH}"
-          else
-            git checkout -B "${UPDATE_BRANCH}" "origin/${MAIN_BRANCH}"
-          fi
+          git fetch origin "${MAIN_BRANCH}"
+          git checkout -B "${UPDATE_BRANCH}" "origin/${MAIN_BRANCH}"
 
       - name: Install Zig ${{ env.ZIG_VERSION }}
         run: |
@@ -67,7 +62,7 @@ jobs:
           short_sha=${new_sha:0:10}
           git add build.zig.zon ggml/build.zig.zon
           git commit -m "chore(deps): bump llama.cpp to ${short_sha}"
-          git push -u origin "${UPDATE_BRANCH}"
+          git push -u --force-with-lease origin "${UPDATE_BRANCH}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "sha=${new_sha}" >> "$GITHUB_OUTPUT"
 
