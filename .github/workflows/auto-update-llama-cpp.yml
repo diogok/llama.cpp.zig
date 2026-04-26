@@ -1,0 +1,187 @@
+name: auto-update-llama-cpp
+
+on:
+  schedule:
+    # daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  ZIG_VERSION: 0.15.2
+  UPDATE_BRANCH: update_llama_cpp
+  MAIN_BRANCH: main
+
+jobs:
+  update-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Switch to ${{ env.UPDATE_BRANCH }} (branch off main if missing)
+        run: |
+          git fetch origin "${MAIN_BRANCH}" 2>/dev/null || true
+          git fetch origin "${UPDATE_BRANCH}" 2>/dev/null || true
+          if git rev-parse --verify "origin/${UPDATE_BRANCH}" >/dev/null 2>&1; then
+            git checkout -B "${UPDATE_BRANCH}" "origin/${UPDATE_BRANCH}"
+          else
+            git checkout -B "${UPDATE_BRANCH}" "origin/${MAIN_BRANCH}"
+          fi
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Bump llama.cpp (root build.zig.zon)
+        run: zig fetch --save=llama_cpp git+https://github.com/ggml-org/llama.cpp
+
+      - name: Bump llama.cpp (ggml/build.zig.zon)
+        working-directory: ggml
+        run: zig fetch --save=ggml git+https://github.com/ggml-org/llama.cpp
+
+      - name: Commit and push if changed
+        id: bump
+        run: |
+          if git diff --quiet -- build.zig.zon ggml/build.zig.zon; then
+            echo "No upstream change since last run."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          new_sha=$(grep -oE 'llama\.cpp#[a-f0-9]+' build.zig.zon | head -1 | cut -d'#' -f2)
+          short_sha=${new_sha:0:10}
+          git add build.zig.zon ggml/build.zig.zon
+          git commit -m "chore(deps): bump llama.cpp to ${short_sha}"
+          git push -u origin "${UPDATE_BRANCH}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=${new_sha}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: update-branch
+    if: needs.update-branch.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux
+          - aarch64-linux
+          - x86_64-windows
+          - aarch64-windows
+        backend: [cpu, vulkan]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.UPDATE_BRANCH }}
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build (${{ matrix.target }} / ${{ matrix.backend }})
+        run: zig build -Dtarget=${{ matrix.target }} -Dbackend=${{ matrix.backend }}
+
+  test:
+    needs: update-branch
+    if: needs.update-branch.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [cpu, vulkan]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.UPDATE_BRANCH }}
+
+      - name: Install Vulkan loader + lavapipe (vulkan backend only)
+        if: matrix.backend == 'vulkan'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Test (${{ matrix.backend }})
+        run: zig build test -Dbackend=${{ matrix.backend }}
+
+  merge-to-main:
+    needs: [update-branch, build, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.MAIN_BRANCH }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fast-forward main from ${{ env.UPDATE_BRANCH }}
+        run: |
+          git fetch origin "${UPDATE_BRANCH}"
+          git merge --ff-only "origin/${UPDATE_BRANCH}"
+          git push origin "${MAIN_BRANCH}"
+
+      - name: Delete ${{ env.UPDATE_BRANCH }} branch
+        run: git push origin ":${UPDATE_BRANCH}"
+
+      - name: Close any open auto-update failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NEW_SHA: ${{ needs.update-branch.outputs.sha }}
+        run: |
+          nums=$(gh issue list --state open --label auto-update-failure --json number --jq '.[].number')
+          for n in $nums; do
+            gh issue comment "$n" --body "Resolved by successful update to llama.cpp \`${NEW_SHA}\` (run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            gh issue close "$n"
+          done
+
+  notify-failure:
+    needs: [update-branch, build, test, merge-to-main]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update rolling failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ATTEMPTED_SHA: ${{ needs.update-branch.outputs.sha }}
+          UPDATE_RESULT: ${{ needs.update-branch.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          MERGE_RESULT: ${{ needs.merge-to-main.result }}
+        run: |
+          gh label create auto-update-failure --color B60205 --description "Scheduled llama.cpp auto-update failed" 2>/dev/null || true
+          body="The auto-update workflow failed.
+
+          - Run: ${RUN_URL}
+          - Attempted llama.cpp commit: \`${ATTEMPTED_SHA:-unknown}\`
+          - Branch: \`${UPDATE_BRANCH}\`
+          - Job results: update=\`${UPDATE_RESULT}\`, build=\`${BUILD_RESULT}\`, test=\`${TEST_RESULT}\`, merge=\`${MERGE_RESULT}\`
+
+          The \`${UPDATE_BRANCH}\` branch is preserved; the next scheduled run will bump it to a newer llama.cpp commit and retry."
+          existing=$(gh issue list --state open --label auto-update-failure --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --label auto-update-failure --title "Auto-update llama.cpp failing" --body "$body"
+          fi
