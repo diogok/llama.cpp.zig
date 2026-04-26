@@ -41,9 +41,12 @@ jobs:
             git checkout -B "${UPDATE_BRANCH}" "origin/${MAIN_BRANCH}"
           fi
 
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: ${{ env.ZIG_VERSION }}
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
 
       - name: Bump llama.cpp (root build.zig.zon)
         run: zig fetch --save=llama_cpp git+https://github.com/ggml-org/llama.cpp
@@ -86,9 +89,12 @@ jobs:
         with:
           ref: ${{ env.UPDATE_BRANCH }}
 
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: ${{ env.ZIG_VERSION }}
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
 
       - name: Build (${{ matrix.target }} / ${{ matrix.backend }})
         run: zig build -Dtarget=${{ matrix.target }} -Dbackend=${{ matrix.backend }}
@@ -112,9 +118,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers
 
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: ${{ env.ZIG_VERSION }}
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
 
       - name: Test (${{ matrix.backend }})
         run: zig build test -Dbackend=${{ matrix.backend }}
