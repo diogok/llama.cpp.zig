@@ -2,7 +2,7 @@
     .name = .ggml,
     .version = "0.0.1",
     .fingerprint = 0x5e7af59a388a17bd, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .ggml = .{
             .url = "git+https://github.com/ggml-org/llama.cpp#dcad77cc3b0865153f486327064fb0320a57a476",

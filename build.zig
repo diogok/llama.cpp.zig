@@ -24,8 +24,26 @@ pub fn build(b: *std.Build) void {
     buildBench(b, llama, options);
     buildServer(b, llama, mtmd, options);
 
-    buildDemo(b, llama, options);
-    buildTest(b, llama, options);
+    const c_mod = buildLlamaTranslateC(b, options);
+    buildDemo(b, llama, c_mod, options);
+    buildTest(b, llama, c_mod, options);
+}
+
+fn buildLlamaTranslateC(
+    b: *std.Build,
+    options: Options,
+) *std.Build.Module {
+    const llama_dep = b.dependency("llama_cpp", .{});
+
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = llama_dep.path("include/llama.h"),
+        .target = options.target,
+        .optimize = options.optimize,
+    });
+    translate_c.addIncludePath(llama_dep.path("include"));
+    translate_c.addIncludePath(llama_dep.path("ggml/include"));
+
+    return translate_c.createModule();
 }
 
 const Options = struct {
@@ -96,17 +114,18 @@ fn buildLlamaCpp(
     });
 
     // each model cpp
-    var model_files = std.array_list.Managed([]const u8).init(b.allocator);
-    defer model_files.deinit();
+    var model_files: std.ArrayList([]const u8) = .empty;
+    defer model_files.deinit(b.allocator);
 
+    const io = b.graph.io;
     const src_shader_path = llama_dep.path("src/models");
-    var iterable_dir = std.fs.cwd().openDir(src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
-    defer iterable_dir.close();
+    var iterable_dir = std.Io.Dir.cwd().openDir(io, src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (it.next() catch @panic("failed to iterate models dir")) |entry| {
+    while (it.next(io) catch @panic("failed to iterate models dir")) |entry| {
         if (std.mem.endsWith(u8, entry.name, ".cpp")) {
             const cpp = b.dupe(entry.name);
-            model_files.append(cpp) catch @panic("failed to add model cpp");
+            model_files.append(b.allocator, cpp) catch @panic("failed to add model cpp");
         }
     }
     mod.addCSourceFiles(.{
@@ -497,6 +516,7 @@ fn buildServer(
 fn buildDemo(
     b: *std.Build,
     llama: *std.Build.Step.Compile,
+    c_mod: *std.Build.Module,
     options: Options,
 ) void {
     const mod = b.createModule(.{
@@ -505,6 +525,7 @@ fn buildDemo(
         .optimize = options.optimize,
     });
 
+    mod.addImport("c", c_mod);
     mod.linkLibrary(llama);
 
     // workaround until this issue is resolved: https://github.com/ziglang/zig/pull/23936
@@ -531,6 +552,7 @@ fn buildDemo(
 fn buildTest(
     b: *std.Build,
     llama: *std.Build.Step.Compile,
+    c_mod: *std.Build.Module,
     options: Options,
 ) void {
     const mod = b.createModule(.{
@@ -539,6 +561,7 @@ fn buildTest(
         .optimize = options.optimize,
     });
 
+    mod.addImport("c", c_mod);
     mod.linkLibrary(llama);
 
     // workaround until this issue is resolved: https://github.com/ziglang/zig/pull/23936
@@ -631,17 +654,19 @@ fn listFilesWithExtension(
     base_path: std.Build.LazyPath,
     ext: []const u8,
 ) ![]const std.Build.LazyPath {
+    const io = b.graph.io;
     var count: usize = 0;
 
-    var iterable_dir = try std.fs.cwd().openDir(
+    var iterable_dir = try std.Io.Dir.cwd().openDir(
+        io,
         base_path.getPath(b),
         .{
             .iterate = true,
         },
     );
-    defer iterable_dir.close();
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (std.mem.endsWith(
             u8,
             entry.name,
@@ -650,12 +675,12 @@ fn listFilesWithExtension(
             count += 1;
         }
     }
-    it.reset();
+    it.reader.reset();
 
     const paths = try b.allocator.alloc(std.Build.LazyPath, count);
 
     var i: usize = 0;
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (std.mem.endsWith(
             u8,
             entry.name,

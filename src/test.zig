@@ -1,16 +1,19 @@
 const std = @import("std");
 const testing = std.testing;
-
-const c = @cImport({
-    @cInclude("llama.h");
-});
+const c = @import("c");
 
 const model_path = "models/TinyStories-656K-Q8_0.gguf";
 
 // Greedy generation is deterministic: same model + same prompt → same tokens.
 // These tests double as a smoke test that llama.cpp built and links correctly.
 
+// Silence the noisy llama.cpp/ggml C logger; otherwise the ~500 lines of log
+// output per test trip Zig 0.16's build runner into rendering a verbose
+// "failed command:" block even though the test passes.
+fn silentLog(_: c.ggml_log_level, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {}
+
 test "build smoke: backend init and model load" {
+    c.llama_log_set(&silentLog, null);
     c.llama_backend_init();
     defer c.llama_backend_free();
 
@@ -50,6 +53,7 @@ fn greedyGenerate(
     prompt: []const u8,
     max_new_tokens: usize,
 ) ![]u8 {
+    c.llama_log_set(&silentLog, null);
     c.llama_backend_init();
     defer c.llama_backend_free();
 
@@ -118,8 +122,8 @@ fn greedyGenerate(
         batch = c.llama_batch_get_one(&decoder_token, 1);
     }
 
-    var output = std.array_list.Managed(u8).init(allocator);
-    errdefer output.deinit();
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
 
     var generated: usize = 0;
     while (generated < max_new_tokens) : (generated += 1) {
@@ -140,9 +144,9 @@ fn greedyGenerate(
             true,
         );
         if (piece_len < 0) return error.FailedToConvertTokenToPiece;
-        try output.appendSlice(buffer[0..@abs(piece_len)]);
+        try output.appendSlice(allocator, buffer[0..@abs(piece_len)]);
         batch = c.llama_batch_get_one(&token_id, 1);
     }
 
-    return output.toOwnedSlice();
+    return output.toOwnedSlice(allocator);
 }

@@ -11,7 +11,7 @@ permissions:
   issues: write
 
 env:
-  ZIG_VERSION: 0.15.2
+  ZIG_VERSION: 0.16.0
   UPDATE_BRANCH: update_llama_cpp
   MAIN_BRANCH: main
 

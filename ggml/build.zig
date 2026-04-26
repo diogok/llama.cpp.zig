@@ -338,18 +338,19 @@ fn buildVulkanShaders(
     const gen_shader_path = b.path(vk_shaders_path);
     mod.addIncludePath(gen_shader_path);
 
-    var shader_files = std.array_list.Managed([]const u8).init(b.allocator);
-    defer shader_files.deinit();
+    var shader_files: std.ArrayList([]const u8) = .empty;
+    defer shader_files.deinit(b.allocator);
 
     // add each shader
+    const io = b.graph.io;
     const src_shader_path = ggml_dep.path(src_prefix ++ "src/ggml-vulkan/vulkan-shaders/");
-    var iterable_dir = std.fs.cwd().openDir(src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
-    defer iterable_dir.close();
+    var iterable_dir = std.Io.Dir.cwd().openDir(io, src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (it.next() catch @panic("failed to iterate generated shaders dir")) |entry| {
+    while (it.next(io) catch @panic("failed to iterate generated shaders dir")) |entry| {
         if (std.mem.endsWith(u8, entry.name, ".comp")) {
             const cpp = b.fmt("{s}.cpp", .{entry.name});
-            shader_files.append(cpp) catch @panic("failed to add generated shader cpp");
+            shader_files.append(b.allocator, cpp) catch @panic("failed to add generated shader cpp");
         }
     }
 
@@ -517,17 +518,19 @@ fn listFilesWithExtension(
     base_path: std.Build.LazyPath,
     ext: []const u8,
 ) ![]const std.Build.LazyPath {
+    const io = b.graph.io;
     var count: usize = 0;
 
-    var iterable_dir = try std.fs.cwd().openDir(
+    var iterable_dir = try std.Io.Dir.cwd().openDir(
+        io,
         base_path.getPath(b),
         .{
             .iterate = true,
         },
     );
-    defer iterable_dir.close();
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (std.mem.endsWith(
             u8,
             entry.name,
@@ -536,12 +539,12 @@ fn listFilesWithExtension(
             count += 1;
         }
     }
-    it.reset();
+    it.reader.reset();
 
     const paths = try b.allocator.alloc(std.Build.LazyPath, count);
 
     var i: usize = 0;
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (std.mem.endsWith(
             u8,
             entry.name,
