@@ -376,54 +376,24 @@ fn buildRun(
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
     if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
-    // cli.cpp depends on server code (exclude server.cpp which has its own main)
-    const srv_path = llama_dep.path("tools/server");
-    const server_cpp_files = listFilesWithExtension(b, srv_path, ".cpp") catch @panic("can't list C++ files for server");
-    for (server_cpp_files) |file| {
-        if (std.mem.endsWith(u8, file.getPath(b), "server.cpp")) continue;
-        mod.addCSourceFile(.{
-            .file = file,
-            .flags = cppflags,
-        });
-    }
+    // cli.cpp links against server-context (the subset of server files that
+    // doesn't pull in the embedded webui assets). Mirrors tools/cli/CMakeLists.txt.
+    const server_context_files = [_][]const u8{
+        "server-chat.cpp",
+        "server-task.cpp",
+        "server-queue.cpp",
+        "server-common.cpp",
+        "server-context.cpp",
+        "server-tools.cpp",
+    };
+    mod.addCSourceFiles(.{
+        .root = llama_dep.path("tools/server"),
+        .files = &server_context_files,
+        .flags = cppflags,
+    });
 
     const mtmd = buildMTMD(b, llama, options);
     mod.linkLibrary(mtmd);
-
-    // use xxd to compile server assets
-    const xxd_mod2 = b.addModule(
-        "xxd_run",
-        .{
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-            .link_libc = true,
-        },
-    );
-    xxd_mod2.addCSourceFiles(.{
-        .root = b.path("src"),
-        .files = &.{
-            "xxd.c",
-        },
-        .flags = &.{},
-    });
-    const xxd_exe2 = b.addExecutable(.{
-        .name = "xxd_run",
-        .root_module = xxd_mod2,
-    });
-    const xxd_run_0b = b.addRunArtifact(xxd_exe2);
-    xxd_run_0b.setCwd(llama_dep.path("tools/server/public"));
-    xxd_run_0b.addArg("-i");
-    xxd_run_0b.addArg("index.html.gz");
-    const index2 = xxd_run_0b.addOutputFileArg("index.html.gz.hpp");
-
-    const xxd_run_1b = b.addRunArtifact(xxd_exe2);
-    xxd_run_1b.setCwd(llama_dep.path("tools/server/public"));
-    xxd_run_1b.addArg("-i");
-    xxd_run_1b.addArg("loading.html");
-    const loading2 = xxd_run_1b.addOutputFileArg("loading.html.hpp");
-
-    mod.addIncludePath(index2.dirname());
-    mod.addIncludePath(loading2.dirname());
 
     const exe = b.addExecutable(.{
         .name = name,
@@ -484,6 +454,9 @@ fn buildServer(
     const common = buildCommon(b, llama, options);
     mod.linkLibrary(common);
 
+    // embed the web UI assets (gated on LLAMA_BUILD_WEBUI in server-http.cpp)
+    mod.addCMacro("LLAMA_BUILD_WEBUI", "");
+
     // use xxd to compile assets
     const xxd_mod = b.addModule(
         "xxd",
@@ -504,20 +477,20 @@ fn buildServer(
         .name = "xxd",
         .root_module = xxd_mod,
     });
-    const xxd_run_0 = b.addRunArtifact(xxd_exe);
-    xxd_run_0.setCwd(llama_dep.path("tools/server/public"));
-    xxd_run_0.addArg("-i");
-    xxd_run_0.addArg("index.html.gz");
-    const index = xxd_run_0.addOutputFileArg("index.html.gz.hpp");
-
-    const xxd_run_1 = b.addRunArtifact(xxd_exe);
-    xxd_run_1.setCwd(llama_dep.path("tools/server/public"));
-    xxd_run_1.addArg("-i");
-    xxd_run_1.addArg("loading.html");
-    const loading = xxd_run_1.addOutputFileArg("loading.html.hpp");
-
-    mod.addIncludePath(index.dirname());
-    mod.addIncludePath(loading.dirname());
+    const assets = [_][]const u8{
+        "index.html",
+        "bundle.js",
+        "bundle.css",
+        "loading.html",
+    };
+    for (assets) |asset| {
+        const run = b.addRunArtifact(xxd_exe);
+        run.setCwd(llama_dep.path("tools/server/public"));
+        run.addArg("-i");
+        run.addArg(asset);
+        const out = run.addOutputFileArg(b.fmt("{s}.hpp", .{asset}));
+        mod.addIncludePath(out.dirname());
+    }
 
     const exe = b.addExecutable(.{
         .name = name,
@@ -594,10 +567,28 @@ fn installWithSuffixes(
 }
 
 const build_info_cpp_src =
+    \\#include <cstdio>
+    \\#include <string>
+    \\
     \\int LLAMA_BUILD_NUMBER = 999999;
     \\char const *LLAMA_COMMIT = "master";
     \\char const *LLAMA_COMPILER = "Zig";
     \\char const *LLAMA_BUILD_TARGET = "any";
+    \\
+    \\int llama_build_number(void) { return LLAMA_BUILD_NUMBER; }
+    \\const char * llama_commit(void) { return LLAMA_COMMIT; }
+    \\const char * llama_compiler(void) { return LLAMA_COMPILER; }
+    \\const char * llama_build_target(void) { return LLAMA_BUILD_TARGET; }
+    \\
+    \\const char * llama_build_info(void) {
+    \\    static std::string s = "b" + std::to_string(LLAMA_BUILD_NUMBER) + "-" + LLAMA_COMMIT;
+    \\    return s.c_str();
+    \\}
+    \\
+    \\void llama_print_build_info(void) {
+    \\    fprintf(stderr, "%s: build = %d (%s)\n",      __func__, llama_build_number(), llama_commit());
+    \\    fprintf(stderr, "%s: built with %s for %s\n", __func__, llama_compiler(), llama_build_target());
+    \\}
 ;
 
 fn listFilesWithExtension(
