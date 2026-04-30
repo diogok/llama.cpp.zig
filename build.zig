@@ -43,7 +43,12 @@ fn buildLlamaTranslateC(
     translate_c.addIncludePath(llama_dep.path("include"));
     translate_c.addIncludePath(llama_dep.path("ggml/include"));
 
-    return translate_c.createModule();
+    const mod = translate_c.createModule();
+    // Exposed publicly so external consumers can do
+    // `llama_cpp_dep.module("c")` and import llama.h bindings directly,
+    // matching how `src/demo.zig` consumes them internally.
+    b.modules.put(b.allocator, "c", mod) catch @panic("OOM");
+    return mod;
 }
 
 const Options = struct {
