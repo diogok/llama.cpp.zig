@@ -1,13 +1,9 @@
 const std = @import("std");
+const c = @import("c");
 
-const c = @cImport({
-    @cInclude("llama.h");
-});
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() != .leak);
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
     // init
     c.llama_backend_init();
@@ -25,12 +21,13 @@ pub fn main() !void {
     }
 
     // TODO: ideally should apply chat templates here
-    try generate(allocator, model, "Hello");
-    try generate(allocator, model, "Goodbye");
+    try generate(allocator, io, model, "Hello");
+    try generate(allocator, io, model, "Goodbye");
 }
 
 fn generate(
     allocator: std.mem.Allocator,
+    io: std.Io,
     model: ?*c.llama_model,
     prompt: []const u8,
 ) !void {
@@ -59,7 +56,6 @@ fn generate(
     sampler_params.no_perf = true;
     const sampler = c.llama_sampler_chain_init(sampler_params);
     defer c.llama_sampler_free(sampler);
-    c.llama_sampler_chain_add(sampler, c.llama_sampler_init_greedy());
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_top_k(40));
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_top_p(0.9, 1));
     c.llama_sampler_chain_add(sampler, c.llama_sampler_init_min_p(0.05, 1));
@@ -109,7 +105,7 @@ fn generate(
     }
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const out = &stdout_writer.interface;
 
     try out.print("{s}\n", .{prompt});

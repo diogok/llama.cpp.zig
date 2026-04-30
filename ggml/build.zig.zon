@@ -2,14 +2,15 @@
     .name = .ggml,
     .version = "0.0.1",
     .fingerprint = 0x5e7af59a388a17bd, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .ggml = .{
-            .url = "git+https://github.com/ggml-org/llama.cpp#f99ef53d2a9591a9a32d28f402630cf7c58f1298",
-            .hash = "N-V-__8AAITnZgcyiMxTbOYsXvt1Nm-PnBXlC6C0l-oDNA--",
+            .url = "git+https://github.com/ggml-org/llama.cpp#739393beeb4b78397003d5d8c5dd0c25a051bc14",
+            .hash = "N-V-__8AAG7C6QhxSum0CQwvaCXdlWLUkBTX4h_hP025hbIA",
         },
         .shaderc = .{
-            .path = "shaderc",
+            .url = "git+https://github.com/diogok/shaderc#c011e9d78a40ca78c4519348b30012bb9ba8c006",
+            .hash = "shaderc-0.0.1-n8BiyJgLDAC8yTufXaQu3gL_SkgaQis11EDyt4zoSdwu",
         },
         .vulkan_headers = .{
             .url = "git+https://github.com/KhronosGroup/Vulkan-Headers#75ad707a587e1469fb53a901b9b68fe9f6fbc11f",
@@ -18,6 +19,10 @@
         .vulkan_hpp = .{
             .url = "git+https://github.com/KhronosGroup/Vulkan-Hpp#d5b553d969cf73b0bd321ae2d1d01b92aabac366",
             .hash = "N-V-__8AAI6BlgFaSlQviaiYGej9pe1o87SP_oTJykbw8RXS",
+        },
+        .spirv_headers = .{
+            .url = "git+https://github.com/KhronosGroup/SPIRV-Headers#01e0577914a75a2569c846778c2f93aa8e6feddd",
+            .hash = "N-V-__8AACLtOgBeZh_2883Rl1qcLSzdgAz_6rTL0MrS30cG",
         },
         .vulkan_sdk_x86_64_linux = .{
             .url = "https://sdk.lunarg.com/sdk/download/1.4.313.0/linux/vulkansdk-linux-x86_64-1.4.313.0.tar.xz",

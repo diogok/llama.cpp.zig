@@ -59,6 +59,15 @@ zig build install -Dtarget=x86_64-linux
 
 First compilation can take several minutes on some plataforms.
 
+## What gets built
+
+`zig build install` produces, under `zig-out/bin/`:
+
+- `llama-run` — single-shot CLI inference (upstream's `llama-cli`).
+- `llama-bench` — performance benchmark.
+- `llama-server` — HTTP/OpenAI-compatible server with the upstream Web UI embedded (served at `/`).
+- `demo` — small Zig example that links the library.
+
 ## Use in Zig
 
 Add as a dependency on your project:
@@ -67,7 +76,7 @@ Add as a dependency on your project:
 zig fetch --save git+https://github.com/diogok/llama.cpp.zig
 ```
 
-Then build the library on your `buid.zig` like:
+Then build the library on your `build.zig` like:
 
 ```zig
 const llama_cpp_dep = b.dependency("llama_cpp_zig", .{
@@ -76,10 +85,17 @@ const llama_cpp_dep = b.dependency("llama_cpp_zig", .{
     .backend = backend, // like `.vulkan` or `.cpu`
 });
 const llama_cpp_lib = llama_cpp_dep.artifact("llama_cpp");
-you_module.linkLibrary(llama_cpp_lib);
+your_module.linkLibrary(llama_cpp_lib);
 ```
 
-Refer to [src/demo.zig] for an usage example.
+For multimodal (vision/audio) support, also link the `mtmd` artifact:
+
+```zig
+const mtmd_lib = llama_cpp_dep.artifact("mtmd");
+your_module.linkLibrary(mtmd_lib);
+```
+
+Refer to [src/demo.zig](src/demo.zig) for a usage example.
 
 ### Metal Backend (macOS)
 

@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: 0.16.0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.target }} / ${{ matrix.backend }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-linux,    backend: cpu,    runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: x86_64-linux,    backend: vulkan, runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: aarch64-linux,   backend: cpu,    runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: aarch64-linux,   backend: vulkan, runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: x86_64-windows,  backend: cpu,    runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: x86_64-windows,  backend: vulkan, runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: aarch64-windows, backend: cpu,    runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: aarch64-windows, backend: vulkan, runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { target: aarch64-macos,   backend: cpu,    runner: macos-latest,  zig_host: aarch64-macos }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${{ matrix.zig_host }}-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: zig build -Dtarget=${{ matrix.target }} -Dbackend=${{ matrix.backend }}
+
+  test:
+    name: test (${{ matrix.backend }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { backend: cpu,    runner: ubuntu-latest, zig_host: x86_64-linux }
+          - { backend: vulkan, runner: ubuntu-latest, zig_host: x86_64-linux }
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Vulkan loader + lavapipe
+        if: matrix.backend == 'vulkan'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan-dev mesa-vulkan-drivers
+
+      - name: Install Zig ${{ env.ZIG_VERSION }}
+        run: |
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${{ matrix.zig_host }}-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
+
+      - name: Test
+        run: zig build test -Dbackend=${{ matrix.backend }}

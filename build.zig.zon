@@ -2,11 +2,11 @@
     .name = .llama_cpp_zig,
     .version = "0.0.1",
     .fingerprint = 0x2177db0a68159fe6, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .llama_cpp = .{
-            .url = "git+https://github.com/ggml-org/llama.cpp#f99ef53d2a9591a9a32d28f402630cf7c58f1298",
-            .hash = "N-V-__8AAITnZgcyiMxTbOYsXvt1Nm-PnBXlC6C0l-oDNA--",
+            .url = "git+https://github.com/ggml-org/llama.cpp#739393beeb4b78397003d5d8c5dd0c25a051bc14",
+            .hash = "N-V-__8AAG7C6QhxSum0CQwvaCXdlWLUkBTX4h_hP025hbIA",
         },
         .ggml = .{
             .path = "ggml",

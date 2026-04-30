@@ -65,7 +65,6 @@ fn buildGGML(
     switch (options.backend) {
         .vulkan => {
             mod.addCMacro("GGML_USE_VULKAN", "1");
-            linkVulkan(b, options.target, mod);
             const vulkan_lib = buildGGMLVulkan(b, options);
             mod.linkLibrary(vulkan_lib);
             mod.lib_paths.appendSlice(b.allocator, vulkan_lib.root_module.lib_paths.items) catch unreachable;
@@ -84,10 +83,11 @@ fn buildGGML(
         },
         else => {},
     }
+    const ggml_commit = commitFromGitUrl(@import("build.zig.zon").dependencies.ggml.url);
 
     mod.addCMacro("NDEBUG", "");
     mod.addCMacro("GGML_VERSION", "0");
-    mod.addCMacro("GGML_COMMIT", "\"unknown\"");
+    mod.addCMacro("GGML_COMMIT", b.fmt("\"{s}\"", .{ggml_commit}));
 
     const src_path = dep.path(src_prefix ++ "src");
 
@@ -336,6 +336,7 @@ fn buildGGMLVulkan(
     const dep = b.dependency("ggml", .{});
     const vk_hpp = b.dependency("vulkan_hpp", .{});
     const vk_headers = b.dependency("vulkan_headers", .{});
+    const spirv_headers = b.dependency("spirv_headers", .{});
 
     var mod = b.addModule(
         "ggml_vulkan",
@@ -347,10 +348,10 @@ fn buildGGMLVulkan(
             .strip = options.strip,
         },
     );
-    mod.addCMacro("NDEBUG", "");
 
-    mod.addCMacro("VK_NV_cooperative_matrix", "");
-    mod.addCMacro("VK_NV_cooperative_matrix2", "");
+    // VK_NV_cooperative_matrix{,2} are guard macros set by vulkan_core.h itself —
+    // do NOT define them on the command line, that triggers a redefinition error.
+    // NDEBUG is implied by ReleaseFast/ReleaseSmall, so don't add it again.
     mod.addCMacro("GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT", "");
     mod.addCMacro("GGML_VULKAN_BFLOAT16_GLSLC_SUPPORT", "");
     mod.addCMacro("GGML_VULKAN_COOPMAT_GLSLC_SUPPORT", "");
@@ -363,6 +364,7 @@ fn buildGGMLVulkan(
 
     mod.addIncludePath(vk_hpp.path("vulkan"));
     mod.addIncludePath(vk_headers.path("include"));
+    mod.addIncludePath(spirv_headers.path("include"));
 
     mod.addIncludePath(b.path("src/vulkan-shaders"));
 
@@ -374,7 +376,7 @@ fn buildGGMLVulkan(
         .flags = cppflags,
     });
 
-    linkVulkan(b, options.target, mod);
+    addVulkanLibraryPath(b, options.target, mod);
 
     const vk_shaders = buildVulkanShaders(b, options);
     mod.linkLibrary(vk_shaders);
@@ -415,18 +417,19 @@ fn buildVulkanShaders(
     const gen_shader_path = b.path(vk_shaders_path);
     mod.addIncludePath(gen_shader_path);
 
-    var shader_files = std.array_list.Managed([]const u8).init(b.allocator);
-    defer shader_files.deinit();
+    var shader_files: std.ArrayList([]const u8) = .empty;
+    defer shader_files.deinit(b.allocator);
 
     // add each shader
+    const io = b.graph.io;
     const src_shader_path = ggml_dep.path(src_prefix ++ "src/ggml-vulkan/vulkan-shaders/");
-    var iterable_dir = std.fs.cwd().openDir(src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
-    defer iterable_dir.close();
+    var iterable_dir = std.Io.Dir.cwd().openDir(io, src_shader_path.getPath(b), .{ .iterate = true }) catch @panic("failed to open generated shaders dir");
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (it.next() catch @panic("failed to iterate generated shaders dir")) |entry| {
+    while (it.next(io) catch @panic("failed to iterate generated shaders dir")) |entry| {
         if (std.mem.endsWith(u8, entry.name, ".comp")) {
             const cpp = b.fmt("{s}.cpp", .{entry.name});
-            shader_files.append(cpp) catch @panic("failed to add generated shader cpp");
+            shader_files.append(b.allocator, cpp) catch @panic("failed to add generated shader cpp");
         }
     }
 
@@ -534,7 +537,10 @@ fn buildVulkanShadersGen(b: *std.Build) *std.Build.Step.Compile {
     return vulkan_shaders_gen_exe;
 }
 
-pub fn linkVulkan(
+/// Adds the Vulkan SDK library path to the module (for finding libvulkan at link time).
+/// Does NOT call linkSystemLibrary — use linkVulkanSystem on the final executable module
+/// to avoid embedding .so references inside static archives.
+pub fn addVulkanLibraryPath(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     mod: *std.Build.Module,
@@ -542,26 +548,20 @@ pub fn linkVulkan(
     const sdk_name = b.fmt("vulkan_sdk_{s}_{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag) });
     _ = std.mem.replaceScalar(u8, sdk_name, '-', '_');
 
-    var vulkan_sdk_dep = b.lazyDependency(sdk_name, .{});
-    if (vulkan_sdk_dep == null) {
-        return;
-    }
+    const vulkan_sdk_dep = b.lazyDependency(sdk_name, .{}) orelse return;
 
     switch (target.result.os.tag) {
         .linux => {
             const arch = @tagName(target.result.cpu.arch);
-            mod.addLibraryPath(vulkan_sdk_dep.?.path(b.fmt("{s}/lib", .{arch})));
-            mod.linkSystemLibrary("vulkan", .{});
+            mod.addLibraryPath(vulkan_sdk_dep.path(b.fmt("{s}/lib", .{arch})));
         },
         .windows => {
             switch (target.result.cpu.arch) {
                 .x86_64 => {
-                    mod.addLibraryPath(vulkan_sdk_dep.?.path("x64"));
-                    mod.linkSystemLibrary("vulkan-1", .{});
+                    mod.addLibraryPath(vulkan_sdk_dep.path("x64"));
                 },
                 .aarch64 => {
-                    mod.addLibraryPath(vulkan_sdk_dep.?.path(""));
-                    mod.linkSystemLibrary("vulkan-1", .{});
+                    mod.addLibraryPath(vulkan_sdk_dep.path(""));
                 },
                 else => {},
             }
@@ -570,22 +570,46 @@ pub fn linkVulkan(
     }
 }
 
+/// Links the Vulkan system library. Call this only on the final executable module.
+pub fn linkVulkanSystem(
+    target: std.Build.ResolvedTarget,
+    mod: *std.Build.Module,
+) void {
+    switch (target.result.os.tag) {
+        .linux => {
+            mod.linkSystemLibrary("vulkan", .{});
+        },
+        .windows => {
+            mod.linkSystemLibrary("vulkan-1", .{});
+        },
+        else => {},
+    }
+}
+
+fn commitFromGitUrl(comptime url: []const u8) []const u8 {
+    const hash_idx = comptime std.mem.indexOfScalar(u8, url, '#') orelse
+    @compileError("dependency URL is missing '#<commit>' suffix: " ++ url);
+    return url[hash_idx + 1 ..];
+}
+
 fn listFilesWithExtension(
     b: *std.Build,
     base_path: std.Build.LazyPath,
     ext: []const u8,
 ) ![]const std.Build.LazyPath {
+    const io = b.graph.io;
     var count: usize = 0;
 
-    var iterable_dir = try std.fs.cwd().openDir(
+    var iterable_dir = try std.Io.Dir.cwd().openDir(
+        io,
         base_path.getPath(b),
         .{
             .iterate = true,
         },
     );
-    defer iterable_dir.close();
+    defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (std.mem.endsWith(
             u8,
             entry.name,
@@ -594,12 +618,12 @@ fn listFilesWithExtension(
             count += 1;
         }
     }
-    it.reset();
+    it.reader.reset();
 
     const paths = try b.allocator.alloc(std.Build.LazyPath, count);
 
     var i: usize = 0;
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (std.mem.endsWith(
             u8,
             entry.name,
