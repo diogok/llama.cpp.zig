@@ -345,7 +345,9 @@ fn buildBench(
     const llama_dep = b.dependency("llama_cpp", .{});
     mod.addCSourceFiles(.{
         .root = llama_dep.path("tools/llama-bench"),
-        .files = &.{"llama-bench.cpp"},
+        // Upstream split the entry point: main.cpp holds main(), which calls
+        // llama_bench() in llama-bench.cpp.
+        .files = &.{ "llama-bench.cpp", "main.cpp" },
         .flags = cppflags,
     });
     mod.addCMacro("NDEBUG", "");
@@ -395,8 +397,11 @@ fn buildRun(
     const llama_dep = b.dependency("llama_cpp", .{});
     mod.addCSourceFiles(.{
         .root = llama_dep.path("tools/cli"),
+        // Upstream split the entry point: main.cpp holds main(), which calls
+        // llama_cli() in cli.cpp.
         .files = &.{
             "cli.cpp",
+            "main.cpp",
         },
         .flags = cppflags,
     });
@@ -470,6 +475,8 @@ fn buildServer(
     mod.addIncludePath(llama_dep.path("include"));
     mod.addIncludePath(llama_dep.path("ggml/include"));
     mod.addIncludePath(llama_dep.path("tools/server"));
+    // server-http.cpp includes ui.h (webui asset declarations).
+    mod.addIncludePath(llama_dep.path("tools/ui"));
 
     const src_path = llama_dep.path("tools/server");
     const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
@@ -489,24 +496,10 @@ fn buildServer(
     const common = buildCommon(b, llama, options);
     mod.linkLibrary(common);
 
-    // embed the web UI assets (gated on LLAMA_BUILD_WEBUI in server-http.cpp)
-    mod.addCMacro("LLAMA_BUILD_WEBUI", "");
-
-    const xxd_exe = buildXxdHostExe(b);
-    const assets = [_][]const u8{
-        "index.html",
-        "bundle.js",
-        "bundle.css",
-        "loading.html",
-    };
-    for (assets) |asset| {
-        const run = b.addRunArtifact(xxd_exe);
-        run.setCwd(llama_dep.path("tools/server/public"));
-        run.addArg("-i");
-        run.addArg(asset);
-        const out = run.addOutputFileArg(b.fmt("{s}.hpp", .{asset}));
-        mod.addIncludePath(out.dirname());
-    }
+    // The web UI is no longer checked into upstream; it now lives in tools/ui
+    // as an npm (Svelte) project whose built assets are embedded only when
+    // LLAMA_BUILD_UI is defined. We build the server without the embedded UI
+    // (matching upstream's no-asset fallback): the JSON API is unaffected.
 
     const exe = b.addExecutable(.{
         .name = name,
@@ -704,25 +697,6 @@ fn listFilesWithExtension(
     }
 
     return paths;
-}
-
-/// Builds a host-targeted xxd executable used at build time to embed assets
-/// (CMakeLists invokes a cmake script equivalent at the same point).
-fn buildXxdHostExe(b: *std.Build) *std.Build.Step.Compile {
-    const mod = b.createModule(.{
-        .target = b.graph.host,
-        .optimize = .ReleaseSafe,
-        .link_libc = true,
-    });
-    mod.addCSourceFiles(.{
-        .root = b.path("src"),
-        .files = &.{"xxd.c"},
-        .flags = &.{},
-    });
-    return b.addExecutable(.{
-        .name = "xxd",
-        .root_module = mod,
-    });
 }
 
 fn linkVulkanSystem(

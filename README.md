@@ -65,7 +65,7 @@ First compilation can take several minutes on some plataforms.
 
 - `llama-run` — single-shot CLI inference (upstream's `llama-cli`).
 - `llama-bench` — performance benchmark.
-- `llama-server` — HTTP/OpenAI-compatible server with the upstream Web UI embedded (served at `/`).
+- `llama-server` — HTTP/OpenAI-compatible server (JSON API only; the upstream Web UI now ships as a separate npm-built package and is not embedded).
 - `demo` — small Zig example that links the library.
 
 ## Use in Zig
