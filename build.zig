@@ -475,8 +475,15 @@ fn buildServer(
     mod.addIncludePath(llama_dep.path("include"));
     mod.addIncludePath(llama_dep.path("ggml/include"));
     mod.addIncludePath(llama_dep.path("tools/server"));
-    // server-http.cpp includes ui.h (webui asset declarations).
-    mod.addIncludePath(llama_dep.path("tools/ui"));
+
+    // Upstream's server-http.cpp unconditionally includes a generated "ui.h"
+    // and links a `llama-ui` library that embeds the web UI assets. We build
+    // without the embedded UI (matching upstream's no-asset fallback): run
+    // tools/ui/embed.cpp with no asset directory to generate ui.h/ui.cpp,
+    // which provide the llama_ui_* symbols the server needs against an empty
+    // asset table.
+    const ui_cpp = buildUiEmbed(b, llama_dep, mod);
+    mod.addCSourceFile(.{ .file = ui_cpp, .flags = cppflags });
 
     const src_path = llama_dep.path("tools/server");
     const cpp_files = listFilesWithExtension(b, src_path, ".cpp") catch @panic("can't list C++ files for GGML");
@@ -496,11 +503,6 @@ fn buildServer(
     const common = buildCommon(b, llama, options);
     mod.linkLibrary(common);
 
-    // The web UI is no longer checked into upstream; it now lives in tools/ui
-    // as an npm (Svelte) project whose built assets are embedded only when
-    // LLAMA_BUILD_UI is defined. We build the server without the embedded UI
-    // (matching upstream's no-asset fallback): the JSON API is unaffected.
-
     const exe = b.addExecutable(.{
         .name = name,
         .root_module = mod,
@@ -516,6 +518,41 @@ fn buildServer(
 
     const run_step = b.step(b.fmt("run-{s}", .{name}), b.fmt("Run {s}", .{name}));
     run_step.dependOn(&run_cmd.step);
+}
+
+// Compile tools/ui/embed.cpp for the build host and run it (with no asset
+// directory) to generate the empty-asset ui.cpp/ui.h. The generated header's
+// directory is added to `mod`'s include path so both the generated ui.cpp and
+// upstream's server-http.cpp can resolve `#include "ui.h"`. Returns the
+// generated ui.cpp to be compiled into the server. Mirrors upstream's
+// `llama-ui-embed` target.
+fn buildUiEmbed(
+    b: *std.Build,
+    llama_dep: *std.Build.Dependency,
+    mod: *std.Build.Module,
+) std.Build.LazyPath {
+    const embed_mod = b.createModule(.{
+        // host build: this tool runs at build time, even when cross-compiling.
+        .target = b.graph.host,
+        .optimize = .ReleaseFast,
+        .link_libc = true,
+        .link_libcpp = true,
+    });
+    embed_mod.addCSourceFile(.{
+        .file = llama_dep.path("tools/ui/embed.cpp"),
+        .flags = cppflags,
+    });
+    const embed_exe = b.addExecutable(.{
+        .name = "llama-ui-embed",
+        .root_module = embed_mod,
+    });
+
+    const run = b.addRunArtifact(embed_exe);
+    const ui_cpp = run.addOutputFileArg("ui.cpp");
+    const ui_h = run.addOutputFileArg("ui.h");
+    // no asset-directory argument -> embed.cpp emits an empty asset table.
+    mod.addIncludePath(ui_h.dirname());
+    return ui_cpp;
 }
 
 fn buildDemo(
