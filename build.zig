@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-
 pub fn build(b: *std.Build) void {
     // consider building with mcpu=x86_64_v3 for broader compatibility, due to avx
     const target = b.standardTargetOptions(.{});
@@ -397,10 +396,10 @@ fn buildRun(
     const llama_dep = b.dependency("llama_cpp", .{});
     mod.addCSourceFiles(.{
         .root = llama_dep.path("tools/cli"),
-        // Upstream split the entry point: main.cpp holds main(), which calls
-        // llama_cli() in cli.cpp.
         .files = &.{
             "cli.cpp",
+            "cli-client.cpp",
+            "cli-context.cpp",
             "main.cpp",
         },
         .flags = cppflags,
@@ -417,21 +416,19 @@ fn buildRun(
     mod.lib_paths.appendSlice(b.allocator, llama.root_module.lib_paths.items) catch unreachable;
     if (options.backend == .vulkan) linkVulkanSystem(options.target, mod);
 
-    // cli.cpp links against server-context (the subset of server files that
-    // doesn't pull in the embedded webui assets). Mirrors tools/cli/CMakeLists.txt.
-    const server_context_files = [_][]const u8{
-        "server-chat.cpp",
-        "server-task.cpp",
-        "server-queue.cpp",
-        "server-common.cpp",
-        "server-context.cpp",
-        "server-tools.cpp",
-    };
-    mod.addCSourceFiles(.{
-        .root = llama_dep.path("tools/server"),
-        .files = &server_context_files,
-        .flags = cppflags,
-    });
+    const server_files = listFilesWithExtensionExcept(
+        b,
+        llama_dep.path("tools/server"),
+        ".cpp",
+        &.{"main.cpp"},
+    ) catch @panic("can't list C++ files for the server");
+    for (server_files) |file| {
+        mod.addCSourceFile(.{ .file = file, .flags = cppflags });
+    }
+
+    // server-http.cpp needs the generated ui.h/ui.cpp (see buildServer).
+    const ui_cpp = buildUiEmbed(b, llama_dep, mod);
+    mod.addCSourceFile(.{ .file = ui_cpp, .flags = cppflags });
 
     mod.linkLibrary(mtmd);
 
@@ -476,12 +473,6 @@ fn buildServer(
     mod.addIncludePath(llama_dep.path("ggml/include"));
     mod.addIncludePath(llama_dep.path("tools/server"));
 
-    // Upstream's server-http.cpp unconditionally includes a generated "ui.h"
-    // and links a `llama-ui` library that embeds the web UI assets. We build
-    // without the embedded UI (matching upstream's no-asset fallback): run
-    // tools/ui/embed.cpp with no asset directory to generate ui.h/ui.cpp,
-    // which provide the llama_ui_* symbols the server needs against an empty
-    // asset table.
     const ui_cpp = buildUiEmbed(b, llama_dep, mod);
     mod.addCSourceFile(.{ .file = ui_cpp, .flags = cppflags });
 
@@ -662,8 +653,12 @@ fn buildInfoCppSrc(b: *std.Build, options: Options) []const u8 {
         \\
     , .{
         llama_cpp_commit,
-        zv.major, zv.minor, zv.patch,
-        @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi),
+        zv.major,
+        zv.minor,
+        zv.patch,
+        @tagName(target.cpu.arch),
+        @tagName(target.os.tag),
+        @tagName(target.abi),
     });
     return std.mem.concat(b.allocator, u8, &.{ globals, build_info_funcs }) catch @panic("OOM");
 }
@@ -687,7 +682,7 @@ const build_info_funcs =
 
 fn commitFromGitUrl(comptime url: []const u8) []const u8 {
     const hash_idx = comptime std.mem.indexOfScalar(u8, url, '#') orelse
-    @compileError("dependency URL is missing '#<commit>' suffix: " ++ url);
+        @compileError("dependency URL is missing '#<commit>' suffix: " ++ url);
     return url[hash_idx + 1 ..];
 }
 
@@ -695,6 +690,15 @@ fn listFilesWithExtension(
     b: *std.Build,
     base_path: std.Build.LazyPath,
     ext: []const u8,
+) ![]const std.Build.LazyPath {
+    return listFilesWithExtensionExcept(b, base_path, ext, &.{});
+}
+
+fn listFilesWithExtensionExcept(
+    b: *std.Build,
+    base_path: std.Build.LazyPath,
+    ext: []const u8,
+    exclude: []const []const u8,
 ) ![]const std.Build.LazyPath {
     const io = b.graph.io;
     var count: usize = 0;
@@ -709,11 +713,7 @@ fn listFilesWithExtension(
     defer iterable_dir.close(io);
     var it = iterable_dir.iterate();
     while (try it.next(io)) |entry| {
-        if (std.mem.endsWith(
-            u8,
-            entry.name,
-            ext,
-        )) {
+        if (wanted(entry.name, ext, exclude)) {
             count += 1;
         }
     }
@@ -723,17 +723,21 @@ fn listFilesWithExtension(
 
     var i: usize = 0;
     while (try it.next(io)) |entry| {
-        if (std.mem.endsWith(
-            u8,
-            entry.name,
-            ext,
-        )) {
+        if (wanted(entry.name, ext, exclude)) {
             paths[i] = base_path.path(b, entry.name);
             i += 1;
         }
     }
 
     return paths;
+}
+
+fn wanted(name: []const u8, ext: []const u8, exclude: []const []const u8) bool {
+    if (!std.mem.endsWith(u8, name, ext)) return false;
+    for (exclude) |excluded| {
+        if (std.mem.eql(u8, name, excluded)) return false;
+    }
+    return true;
 }
 
 fn linkVulkanSystem(
@@ -770,8 +774,7 @@ fn compileMetalLib(b: *std.Build, ggml_dep: *std.Build.Dependency) std.Build.Laz
     // Step 1: Compile .metal to .air (Metal Intermediate Representation)
     const compile_cmd = b.addSystemCommand(&.{
         "xcrun", "-sdk", "macosx", "metal",
-        "-c",
-        "-O3",
+        "-c",    "-O3",
     });
     compile_cmd.addPrefixedDirectoryArg("-I", include_path);
     compile_cmd.addPrefixedDirectoryArg("-I", metal_include_path);
