@@ -89,6 +89,8 @@ fn buildLlamaCpp(
     }
 
     mod.addCMacro("NDEBUG", "");
+    // version string normally injected by upstream CMake
+    mod.addCMacro("LLAMA_VERSION", "\"0.1.0-dev\"");
 
     mod.addIncludePath(llama_dep.path("src"));
     mod.addIncludePath(llama_dep.path("include"));
@@ -674,9 +676,9 @@ const build_info_funcs =
     \\    return s.c_str();
     \\}
     \\
-    \\void llama_print_build_info(void) {
-    \\    fprintf(stderr, "%s: build = %d (%s)\n",      __func__, llama_build_number(), llama_commit());
-    \\    fprintf(stderr, "%s: built with %s for %s\n", __func__, llama_compiler(), llama_build_target());
+    \\void llama_print_build_info(const char * llama_version) {
+    \\    fprintf(stderr, "version: %s (build %d, commit %s)\n", llama_version, llama_build_number(), llama_commit());
+    \\    fprintf(stderr, "built with %s for %s\n", llama_compiler(), llama_build_target());
     \\}
 ;
 
