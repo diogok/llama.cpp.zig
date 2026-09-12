@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .llama_cpp = .{
-            .url = "git+https://github.com/ggml-org/llama.cpp#4197155addb6989875b26e81dda73e9290fe4cad",
-            .hash = "N-V-__8AAKMB4Ql_RTHaxUoL77XirLKGqZL_xTUiele1lCW1",
+            .url = "git+https://github.com/ggml-org/llama.cpp#56381e407c0ccfb3a6f71e668a27a901001d22ce",
+            .hash = "N-V-__8AAIwSPQp-1labngn05UywtCTgy8m8G4VN64_uwlL9",
         },
         .ggml = .{
             .path = "ggml",
