@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .ggml = .{
-            .url = "git+https://github.com/ggml-org/llama.cpp#4197155addb6989875b26e81dda73e9290fe4cad",
-            .hash = "N-V-__8AAKMB4Ql_RTHaxUoL77XirLKGqZL_xTUiele1lCW1",
+            .url = "git+https://github.com/ggml-org/llama.cpp#31953bcf74ba489a8bbb0c936c5fcf24fcf9485c",
+            .hash = "N-V-__8AAGEc-QoNKhPu8my8q6lx0cQDa0YaCPtzuY9_Dsm4",
         },
         .shaderc = .{
             .url = "git+https://github.com/diogok/shaderc#c011e9d78a40ca78c4519348b30012bb9ba8c006",
